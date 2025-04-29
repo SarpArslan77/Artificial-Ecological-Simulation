@@ -1,4 +1,6 @@
 
+#! solve why the pollen production does not work
+
 import pygame
 import sys
 from general import General
@@ -7,13 +9,15 @@ import random
 import numpy as np
 from scipy.signal import convolve2d
 from datetime import datetime
-import math
+from producers import Producers
+from distributors import Distributors
+from cells import Cells
+from utility import Corpse, Food, Pollen
 
 class Visual():
 
-    def __init__(self, general: General):
+    def __init__(self):
 
-        self.general = general
         
         pygame.init()
         self.fps: int = 60 # in terms of simulation: 1 second = 1 day, 30 secons = 1 month and 360 seconds(6 minutes) = 1 year
@@ -32,7 +36,10 @@ class Visual():
         self.display_caption = pygame.display.set_caption("Artificial Ecological Simulation")
         self.clock = pygame.time.Clock()
 
-        self.world = pygame.Surface((self.general.world_size, self.general.world_size))
+        self.world = pygame.Surface((General.world_size, General.world_size))
+
+        pygame.font.init()
+        self.font = pygame.font.Font(None, 15)
 
         self.camera_x: int = 0
         self.camera_y: int = 0
@@ -114,23 +121,30 @@ class Visual():
         distance = np.sqrt(x**2+y**2)
         self.circle_kernel[distance<=5]=1
         self.circle_kernel/=np.sum(self.circle_kernel)
-        # load all the already created matrices
+        # load all the already created matrices34
         self.all_matrices = np.load("map_1234.npz")
         self.elevation_matrix = self.all_matrices["elevation_smoothed_matrix"]
-        print(type(self.elevation_matrix))
         self.temperature_matrix = self.all_matrices["temperature_smoothed_matrix"]
         self.humidity_matrix = self.all_matrices["humidity_smoothed_matrix"]
         self.radioactivity_matrix = self.all_matrices["radioactivity_smoothed_matrix"]
         self.productivity_matrix = self.all_matrices["productivity_smoothed_matrix"]
 
+        # create the cells upon initializing
+        Producers.generate_starting_producer_cells(100)
+        Distributors.generate_starting_distributor_cells(150)
+        self.cells_on_map = False
+        self.utility_on_map = False
+        self.cell_matrix_labels_on_map = False
+        self.utility_matrix_labels_on_map = False
+
         self.running: bool = True
+        self.paused: bool = False
         self.choosen_map: int = 1 # shown map on the display, inputted from the user
         self.set_camera()
-        self.show_simulation_info(self.day, self.month, self.year)
+        self.show_simulation_info()
 
         self.simulation_start_time = datetime.now()
-
-
+        self.paused_time = 0
 
     # 1) general settings
     def handle_input(self) -> bool:
@@ -151,8 +165,8 @@ class Visual():
             if keys[pygame.K_x]:
                 self.zoom_level = max(self.zoom_level-self.zoom_speed, self.min_zoom)
         # keep the camera within bounds
-        max_camera_x = self.general.world_size - (self.screen_width/self.zoom_level)
-        max_camera_y = self.general.world_size - (self.screen_height/self.zoom_level)
+        max_camera_x = General.world_size - (self.screen_width/self.zoom_level)
+        max_camera_y = General.world_size - (self.screen_height/self.zoom_level)
         self.camera_x = max(0, min(self.camera_x, max_camera_x))
         self.camera_y = max(0, min(self.camera_y, max_camera_y))
 
@@ -167,7 +181,7 @@ class Visual():
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
 
     def set_camera(self) -> None:
-        self.screen.fill(self.general.colors["white"])
+        self.screen.fill(General.colors["white"])
 
         view_height = int(self.screen_height/self.zoom_level)
         view_width = int(self.screen_width/self.zoom_level)
@@ -194,13 +208,17 @@ class Visual():
             "5: Humidity Map",
             "6: Radioactivity Map",
             "7: Productivity Map",
+            "N1: Cells",
+            "N2: Utilities",
+            "N3: Cell Labels",
+            "N4: Utility Labels",
         ]
         for i, text in enumerate(settings_info):
-            settings_text_surface = font.render(text, True, self.general.colors["red"])
+            settings_text_surface = font.render(text, True, General.colors["red"])
             self.screen.blit(settings_text_surface, (10, 10+i*25))
 
-    def show_simulation_info(self, day: int, month: int, year: int) -> None:
-        pygame.draw.rect(self.screen, self.general.colors["purple"], (self.screen_width-105, 0, 105, 100))
+    def show_simulation_info(self) -> None:
+        pygame.draw.rect(self.screen, General.colors["purple"], (self.screen_width-105, 0, 105, 100))
         simulation_info: list[str] = [
             "Days Elapsed: ",
             f"Day: {self.seconds_till_start%30}",
@@ -209,15 +227,15 @@ class Visual():
         ]
         font = pygame.font.Font(None, 20)
         for i, text in enumerate(simulation_info):
-            simulation_text_surface = font.render(text, True, self.general.colors["yellow"])
+            simulation_text_surface = font.render(text, True, General.colors["yellow"])
             self.screen.blit(simulation_text_surface, (self.screen_width-100, 10+i*25))
 
     # 2) code snippet for the map generation
     def draw_grid_map(self) -> None:
         for y in range(0, self.screen_width+30, 10):
-            pygame.draw.line(self.world, self.general.colors["gray"], (self.camera_x+y-20, self.camera_y-20), (self.camera_x+y-20, self.camera_y+self.screen_height+20))
+            pygame.draw.line(self.world, General.colors["gray"], (self.camera_x+y-20, self.camera_y-20), (self.camera_x+y-20, self.camera_y+self.screen_height+20))
         for x in range(0, self.screen_height+30, 10):
-            pygame.draw.line(self.world, self.general.colors["gray"], (self.camera_x-20, self.camera_y+x-20), (self.camera_x+self.screen_width+20, self.camera_y+x-20))
+            pygame.draw.line(self.world, General.colors["gray"], (self.camera_x-20, self.camera_y+x-20), (self.camera_x+self.screen_width+20, self.camera_y+x-20))
 
     def get_elevation(self, x: int, y: int) -> float:
         e: float = 1 * self.noise_elev.noise2(x * self.noise_scale * 1, y * self.noise_scale * 1)
@@ -305,19 +323,19 @@ class Visual():
         all_drain_value = []
         all_drain_positions = []
         for _ in range(zone_count):
-            source_x = random.randint(0, self.general.world_size-1)
-            source_y = random.randint(0, self.general.world_size-1)
+            source_x = random.randint(0, General.world_size-1)
+            source_y = random.randint(0, General.world_size-1)
             while (source_x, source_y) in all_source_positions:
-                source_x = random.randint(0, self.general.world_size-1)
-                source_y = random.randint(0, self.general.world_size-1)
+                source_x = random.randint(0, General.world_size-1)
+                source_y = random.randint(0, General.world_size-1)
             all_source_positions.append((source_y, source_x,))
             for _ in range(500):
-                drain_x_position = max(min(source_x - random.randint(-25, 25), self.general.world_size-1), 0)
-                drain_y_position = max(min(source_y - random.randint(-25, 25), self.general.world_size-1), 0)
+                drain_x_position = max(min(source_x - random.randint(-25, 25), General.world_size-1), 0)
+                drain_y_position = max(min(source_y - random.randint(-25, 25), General.world_size-1), 0)
                 drain_value = 1 - random.uniform(0, 0.5)
                 while (drain_x_position, drain_y_position) in all_drain_positions:
-                    drain_x_position = max(min(source_x - random.randint(-25, 25), self.general.world_size-1), 0)
-                    drain_y_position = max(min(source_y - random.randint(-25, 25), self.general.world_size-1), 0)
+                    drain_x_position = max(min(source_x - random.randint(-25, 25), General.world_size-1), 0)
+                    drain_y_position = max(min(source_y - random.randint(-25, 25), General.world_size-1), 0)
                 all_drain_positions.append((drain_y_position, drain_x_position)) 
                 all_drain_value.append(drain_value)
 
@@ -362,7 +380,7 @@ class Visual():
         else: return 0
 
     def calculate_elevation_matrix(self) -> list[list[int]]:
-        elevation_matrix = [[self.get_elevation(x, y) for x in range(self.general.world_size)] for y in range(self.general.world_size)]
+        elevation_matrix = [[self.get_elevation(x, y) for x in range(General.world_size)] for y in range(General.world_size)]
         elevation_matrix_np = np.array(elevation_matrix)
         elevation_sum = convolve2d(elevation_matrix_np, self.square_kernel, mode="same", boundary="fill")
         elevation_counts = convolve2d(np.ones_like(elevation_matrix_np), self.square_kernel, mode="same", boundary="fill")
@@ -370,7 +388,7 @@ class Visual():
         return elevation_smoothed_matrix
 
     def calculate_temperature_matrix(self, elevation_matrix: list[list[int]]) -> list[list[int]]:
-        temperature_matrix = [[self.get_temperature(x, y, elevation_matrix[y][x]) for x in range(self.general.world_size)] for y in range(self.general.world_size)]
+        temperature_matrix = [[self.get_temperature(x, y, elevation_matrix[y][x]) for x in range(General.world_size)] for y in range(General.world_size)]
         temperature_matrix_np = np.array(temperature_matrix)
         temperature_sum = convolve2d(temperature_matrix_np, self.square_kernel, mode="same", boundary="fill")
         temperature_counts = convolve2d(np.ones_like(temperature_matrix_np), self.square_kernel, mode="same", boundary="fill")
@@ -378,7 +396,7 @@ class Visual():
         return temperature_smoothed_matrix
 
     def calculate_humidity_matrix(self, elevation_matrix: list[list[int]]) -> list[list[int]]:
-        humidity_matrix = [[self.get_humidity(x, y, elevation_matrix[y][x]) for x in range(self.general.world_size)] for y in range(self.general.world_size)]
+        humidity_matrix = [[self.get_humidity(x, y, elevation_matrix[y][x]) for x in range(General.world_size)] for y in range(General.world_size)]
         humidity_matrix_np = np.array(humidity_matrix)
         humidity_sum = convolve2d(humidity_matrix_np, self.square_kernel, mode="same", boundary="fill")
         humidity_counts = convolve2d(np.ones_like(humidity_matrix_np), self.square_kernel, mode="same", boundary="fill")
@@ -387,7 +405,7 @@ class Visual():
 
     def calculate_radioactivity_matrix(self) -> list[list[int]]:
         radioactive_sources, radioactive_drain_positions, radioactive_drain_values = self.get_radioactivity()
-        radioactivity_matrix = np.zeros((self.general.world_size, self.general.world_size))
+        radioactivity_matrix = np.zeros((General.world_size, General.world_size))
         for source_y, source_x  in radioactive_sources:
             radioactivity_matrix[source_y][source_x] = 1
         for i in range(len(radioactive_drain_values)):
@@ -400,7 +418,7 @@ class Visual():
         return radioactivity_smoothed_matrix
 
     def calculate_productivity_matrix(self, humidity_matrix: list[list[int]], radioactivity_smoothed_matrix: list[list[int]]) -> list[int]:
-        productivity_matrix = [[self.get_productivity(x, y, humidity_matrix[y][x], radioactivity_smoothed_matrix[y][x]) for x in range(self.general.world_size)] for y in range(self.general.world_size)]
+        productivity_matrix = [[self.get_productivity(x, y, humidity_matrix[y][x], radioactivity_smoothed_matrix[y][x]) for x in range(General.world_size)] for y in range(General.world_size)]
         productivity_matrix_np = np.array(productivity_matrix)
         productivity_sum = convolve2d(productivity_matrix_np, self.square_kernel, mode="same", boundary="fill")
         productivity_counts = convolve2d(np.ones_like(productivity_matrix_np), self.square_kernel, mode="same", boundary="fill")
@@ -420,35 +438,35 @@ class Visual():
     def draw_elevation_map(self) -> None:
         for x in range(-30, self.screen_width+30, 10):
             for y in range(-30, self.screen_height+30, 10):
-                elevation_color_no: int = self.determine_elevation_color(self.elevation_matrix[min(self.general.world_size-1, max(0, int(self.camera_y+y)))][min(self.general.world_size-1, max(0, int(self.camera_x+x)))])
-                pygame.draw.rect(self.world, self.elevation_colors[elevation_color_no], ((min(self.general.world_size-1, max(0, int(self.camera_x+x))), min(self.general.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
+                elevation_color_no: int = self.determine_elevation_color(self.elevation_matrix[min(General.world_size-1, max(0, int(self.camera_y+y)))][min(General.world_size-1, max(0, int(self.camera_x+x)))])
+                pygame.draw.rect(self.world, self.elevation_colors[elevation_color_no], ((min(General.world_size-1, max(0, int(self.camera_x+x))), min(General.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
 
     def draw_temperature_map(self) -> None:
         for x in range(-30, self.screen_width+30, 10):
             for y in range(-30, self.screen_height+30, 10):
-                temperature_color_no: int = self.determine_temperature_color(self.temperature_matrix[min(self.general.world_size-1, max(0, int(self.camera_y+y)))][min(self.general.world_size-1, max(0, int(self.camera_x+x)))])
-                pygame.draw.rect(self.world, self.temperature_colors[temperature_color_no], ((min(self.general.world_size-1, max(0, int(self.camera_x+x))), min(self.general.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
+                temperature_color_no: int = self.determine_temperature_color(self.temperature_matrix[min(General.world_size-1, max(0, int(self.camera_y+y)))][min(General.world_size-1, max(0, int(self.camera_x+x)))])
+                pygame.draw.rect(self.world, self.temperature_colors[temperature_color_no], ((min(General.world_size-1, max(0, int(self.camera_x+x))), min(General.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
 
     def draw_humidity_map(self) -> None:
         for x in range(-30, self.screen_width+30, 10):
             for y in range(-30, self.screen_height+30, 10):
-                humidity_color_no: int = self.determine_humidity_color(self.humidity_matrix[min(self.general.world_size-1, max(0, int(self.camera_y+y)))][min(self.general.world_size-1, max(0, int(self.camera_x+x)))])
-                pygame.draw.rect(self.world, self.humidity_colors[humidity_color_no], ((min(self.general.world_size-1, max(0, int(self.camera_x+x))), min(self.general.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
+                humidity_color_no: int = self.determine_humidity_color(self.humidity_matrix[min(General.world_size-1, max(0, int(self.camera_y+y)))][min(General.world_size-1, max(0, int(self.camera_x+x)))])
+                pygame.draw.rect(self.world, self.humidity_colors[humidity_color_no], ((min(General.world_size-1, max(0, int(self.camera_x+x))), min(General.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
 
     def draw_radioactivity_map(self) -> None:
         for x in range(-30, self.screen_width+30, 10):
             for y in range(-30, self.screen_height+30, 10):
-                radioactivity_color_no: int = self.determine_temperature_color(self.radioactivity_matrix[min(self.general.world_size-1, max(0, int(self.camera_y+y)))][min(self.general.world_size-1, max(0, int(self.camera_x+x)))])
-                pygame.draw.rect(self.world, self.radioactivity_colors[radioactivity_color_no], ((min(self.general.world_size-1, max(0, int(self.camera_x+x))), min(self.general.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
+                radioactivity_color_no: int = self.determine_temperature_color(self.radioactivity_matrix[min(General.world_size-1, max(0, int(self.camera_y+y)))][min(General.world_size-1, max(0, int(self.camera_x+x)))])
+                pygame.draw.rect(self.world, self.radioactivity_colors[radioactivity_color_no], ((min(General.world_size-1, max(0, int(self.camera_x+x))), min(General.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
 
     def draw_productivity_map(self) -> None:
         for x in range(-30, self.screen_width+30, 10):
             for y in range(-30, self.screen_height+30, 10):
-                productivity_color_no: int = self.determine_productivity_color(self.productivity_matrix[min(self.general.world_size-1, max(0, int(self.camera_y+y)))][min(self.general.world_size-1, max(0, int(self.camera_x+x)))])
-                pygame.draw.rect(self.world, self.productivity_colors[productivity_color_no], ((min(self.general.world_size-1, max(0, int(self.camera_x+x))), min(self.general.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
+                productivity_color_no: int = self.determine_productivity_color(self.productivity_matrix[min(General.world_size-1, max(0, int(self.camera_y+y)))][min(General.world_size-1, max(0, int(self.camera_x+x)))])
+                pygame.draw.rect(self.world, self.productivity_colors[productivity_color_no], ((min(General.world_size-1, max(0, int(self.camera_x+x))), min(General.world_size-1, max(0, int(self.camera_y+y))), 9, 9)))
 
     #3) code snippet for seasonal change
-    def update_temperatures(self, phase_shift: int = 0, randomness: float = 0):
+    def update_temperature_map(self, phase_shift: int = 0, randomness: float = 0) -> None:
         """Vectorized monthly temperature update for entire matrix"""
         day_of_year: int = self.month * 30  
         
@@ -458,15 +476,93 @@ class Visual():
         
         # In-place operations for memory efficiency
         np.add(self.temperature_matrix, seasonal_swing, out=self.temperature_matrix)
-        np.add(self.temperature_matrix, 
-            np.random.uniform(-randomness, randomness, self.temperature_matrix.shape),
-            out=self.temperature_matrix)
+        if randomness:
+            np.add(self.temperature_matrix, 
+                np.random.uniform(-randomness, randomness, self.temperature_matrix.shape),
+                out=self.temperature_matrix)
         # In-place clipping avoids creating new array
         np.clip(self.temperature_matrix, -1.0, 1.0, out=self.temperature_matrix)
 
-    # main running function
-    def run(self):
+    def update_cells_temperature(self, cells_list: list) -> None:
+        if not(cells_list): return
 
+        y_positions = [cell.position_y for cell in cells_list]
+        x_positions = [cell.position_x for cell in cells_list]
+        new_temperatures = self.temperature_matrix[y_positions, x_positions]
+        for cell, temp in zip(cells_list, new_temperatures):
+            cell.temperature_level = temp
+
+    # 4) code snippet for the producers
+    def draw_producers(self) -> None:
+        for producer_cell in Producers.all_producer_cells_list:
+            producer_cell: Producers
+            if (self.camera_x <= producer_cell.position_x < self.camera_x+self.screen_width) and \
+                (self.camera_y <= producer_cell.position_y < self.camera_y+self.screen_height):
+                pygame.draw.rect(self.world, producer_cell.color, (producer_cell.position_x+2, producer_cell.position_y+2, 7, 7))
+
+    def draw_distributors(self) -> None:
+        for distributor_cell in Distributors.all_distributor_cells_list:
+            distributor_cell: Distributors
+            if (self.camera_x <= distributor_cell.position_x < self.camera_x+self.screen_width) and \
+                (self.camera_y <= distributor_cell.position_y < self.camera_y+self.screen_height):
+                pygame.draw.rect(self.world, distributor_cell.color, (distributor_cell.position_x+2, distributor_cell.position_y+2, 7, 7))
+
+    # 5) code snippet for the utilities
+    def draw_corpses(self) -> None:
+        for corpse in Corpse.all_corpses_list:
+            corpse: Corpse
+            pygame.draw.rect(self.world, corpse.color, (corpse.position_x+2, corpse.position_y+2, 7, 7))
+
+    def draw_foods(self) -> None:
+        for food in Food.all_foods_list:
+            food: Food
+            pygame.draw.rect(self.world, food.color, (food.position_x+2, food.position_y+2, 7, 7))
+    
+    def draw_pollens(self) -> None:
+        for pollen in Pollen.all_pollen_list:
+            pollen: Pollen
+            pygame.draw.rect(self.world, pollen.color, (pollen.position_x+2, pollen.position_y+2, 7, 7))
+
+    ## 6) DEBUGGING TOOLS
+    def draw_all_cell_matrices_labels(self) -> None:
+        for x in range(-30, self.screen_width+30, 10):
+            for y in range(-30, self.screen_height+30, 10):
+                # Calculate the actual world coordinates based on camera position
+                world_x = min(General.world_size-1, max(0, int(self.camera_x+x)))
+                world_y = min(General.world_size-1, max(0, int(self.camera_y+y)))
+                # Convert to matrix indices (divide by 10 as your cells are in a 10x10 grid)
+                matrix_x = world_x // 10
+                matrix_y = world_y // 10
+                # Check if within matrix bounds
+                if matrix_x < General.world_size // 10 and matrix_y < General.world_size // 10:
+                    if General.all_cells_matrix[matrix_y, matrix_x]:
+                        cell = General.all_cells_matrix[matrix_y, matrix_x]
+                        if type(cell) == Producers:
+                            cell_label = "P"
+                        elif type(cell) == Distributors:
+                            cell_label = "D"
+                        label_surface = self.font.render(cell_label, True, General.colors["black"])
+                        self.world.blit(label_surface, (world_x+2, world_y+1))
+
+    def draw_all_utility_matrix_labels(self) -> None:
+        for x in range(-30, self.screen_width+30, 10):
+            for y in range(-30, self.screen_height+30, 10):
+                world_x = min(General.world_size-1, max(0, int(self.camera_x+x)))
+                world_y = min(General.world_size-1, max(0, int(self.camera_y+y)))
+                if (world_x//10 < General.world_size//10) and (world_y//10 < General.world_size//10):
+                    single_utility = General.all_utility_matrix[world_y//10, world_x//10]
+                    if single_utility:
+                        if type(single_utility) == Food:
+                            utility_label = "F"
+                        if type(single_utility) == Corpse:
+                            utility_label = "C"
+                        if type(single_utility) == Pollen:
+                            utility_label = "L"
+                        label_surface = self.font.render(utility_label, True, General.colors["black"])
+                        self.world.blit(label_surface, (world_x+2, world_y+1))
+
+    # main running function
+    def run(self) -> None:
         while self.running:
             for event in pygame.event.get():
                 # keyboard event handling
@@ -479,8 +575,6 @@ class Visual():
                         self.choosen_map = 0
                     elif event.key == pygame.K_1:
                         self.choosen_map = 1
-                    elif event.key == pygame.K_2:
-                        self.choosen_map = 2
                     elif event.key == pygame.K_3:
                         self.choosen_map = 3
                     elif event.key == pygame.K_4:
@@ -491,58 +585,119 @@ class Visual():
                         self.choosen_map = 6
                     elif event.key == pygame.K_7:
                         self.choosen_map = 7
+                    elif event.key == pygame.K_KP1:
+                        self.cells_on_map = not(self.cells_on_map)
+                    elif event.key == pygame.K_KP2:
+                        self.utility_on_map = not(self.utility_on_map)
+                    elif event.key == pygame.K_KP3:
+                        self.cell_matrix_labels_on_map = not(self.cell_matrix_labels_on_map)
+                    elif event.key == pygame.K_KP4:
+                        self.utility_matrix_labels_on_map = not(self.utility_matrix_labels_on_map)
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not(self.paused)
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    mouse_pos_x, mouse_pos_y = event.pos
+                    
                 # resizing the screen
                 if event.type == pygame.VIDEORESIZE:
                     self.handle_resize(event)
 
-            # show the simulation info regardless
-            self.show_simulation_info(self.day, self.month, self.year)
-
-            # start of real loop
-            key_pressed: bool = self.handle_input()
+            # subrtact the time from the simulation start time the amount of time paused
+            if (self.paused) and not(self.paused_time):
+                self.paused_time = datetime.now()
             
-            # change the map, according to user input
-            if key_pressed:
+            # main loop of the simulation
+            if not(self.paused):
+                # if there was a pause, update the simulation start time and reset the paused time
+                if self.paused_time:
+                    self.simulation_start_time += (datetime.now() - self.paused_time)
+                    self.paused_time = 0
+
+                # show the simulation info regardless
+                self.show_simulation_info()
+
+                # start of real loop
+                key_pressed: bool = self.handle_input()
+                
+                # change the map, according to user input
+                #! optimize this, the screen should only be drawn and not the whole world
                 self.set_camera()
-                self.show_simulation_info(self.day, self.month, self.year)
+                self.show_simulation_info()
                 if self.choosen_map == 0:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                 elif self.choosen_map == 1:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_grid_map()
-                elif self.choosen_map == 2:
-                    pass
                 elif self.choosen_map == 3:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_elevation_map()
                 elif self.choosen_map == 4:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_temperature_map()
                 elif self.choosen_map == 5:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_humidity_map()
                 elif self.choosen_map == 6:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_radioactivity_map()
                 elif self.choosen_map == 7:
-                    self.world.fill(self.general.colors["white"])
+                    self.world.fill(General.colors["white"])
                     self.draw_productivity_map()
 
-            pygame.display.update()
-            self.clock.tick(self.fps)
+                # check whether non-map ingredients should also be drawn
+                if self.utility_on_map:
+                    self.draw_corpses()
+                    self.draw_foods()
+                    self.draw_pollens()
+                if self.cells_on_map:
+                    self.draw_producers()
+                    self.draw_distributors()
+                if self.utility_matrix_labels_on_map:
+                    self.draw_all_utility_matrix_labels()
+                if self.cell_matrix_labels_on_map:
+                    self.draw_all_cell_matrices_labels()
 
-            self.seconds_till_start: int = int((datetime.now() - self.simulation_start_time).total_seconds())
-            self.day = self.seconds_till_start%30
-            self.month = (self.seconds_till_start//30)%12
-            self.year = self.seconds_till_start//360
-            # update the temperature matrix monthly to keep up with the seasonal changes
-            if self.day//29 == 1:
-                self.update_temperatures()
+
+                pygame.display.update()
+                self.clock.tick(self.fps)
+
+                self.seconds_till_start: int = int((datetime.now() - self.simulation_start_time).total_seconds())
+                self.day = self.seconds_till_start%30
+                self.month = (self.seconds_till_start//30)%12
+                self.year = self.seconds_till_start//360
+                if not(self.day):
+                    previous_day = self.day
+                if self.day != previous_day:
+                    if self.day//29 == 1: # update temperature monthly for the map and the cells
+                        self.update_temperature_map()
+                        self.update_cells_temperature(Cells.all_cells_list)
+                        if self.choosen_map == 4: # update if temperature map is being shown already
+                            self.draw_temperature_map()
+                        
+                    # in game daily loop for the cells / utilities
+                    for producer_cell in Producers.all_producer_cells_list:
+                        producer_cell: Producers
+                        producer_cell.main_loop_producer_cells()
+                    for distributor_cell in Distributors.all_distributor_cells_list:
+                        distributor_cell: Distributors
+                        distributor_cell.main_loop_distributor_cells()
+                    for corpse in Corpse.all_corpses_list:
+                        corpse: Corpse
+                        corpse.corpse_main_loop()
+                    for food in Food.all_foods_list:
+                        food: Food
+                        food.food_main_loop()
+                    for pollen in Pollen.all_pollen_list:
+                        pollen: Pollen
+                        pollen.pollen_main_loop()
+
+                    # Update previous_day for the next check
+                    previous_day = self.day
 
         pygame.quit()
         
+# TEST TEST TEST TEST TEST
 if __name__ == "__main__":
-    test_general = General()
-    test_visual = Visual(test_general)
+    test_visual = Visual()
     test_visual.run()
     sys.exit()
