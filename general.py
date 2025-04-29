@@ -1,34 +1,44 @@
+import numpy as np
 
 class General():
 
-    def __init__(self):
+    world_size: int = 2500
 
-        self.colors = {
-            "white": (255, 255, 255),
-            "black": (0, 0, 0),
-            "gray": (125, 125, 125),
-            "red": (255, 0, 0),
-            "green" : (0, 255, 0),
-            "blue" : (0, 0, 255),
-            "purple" : (128, 0, 128),
-            "yellow" : (255, 255, 0)
+    colors = {
+        "white": (255, 255, 255),
+        "black": (0, 0, 0),
+        "gray": (125, 125, 125),
+        "red": (255, 0, 0),
+        "green" : (0, 255, 0),
+        "blue" : (0, 0, 255),
+        "purple" : (128, 0, 128),
+        "yellow" : (255, 255, 0),
+        "brown" : (90, 50, 10),
+        "orange" : (255, 165, 0),
+    }
 
-        }
+    total_grid_cells: int = (world_size//10)**2
 
-        self.elevation_colors = {
-            0: (46, 34, 22),    # Dark brown (lowest elevation)
-            1: (69, 50, 27),    # Medium brown
-            2: (92, 66, 32),    # Light brown
-            3: (115, 82, 37),   # Tan
-            4: (138, 98, 42),   # Light tan
-            5: (161, 114, 47),  # Sandy yellow
-            6: (184, 130, 52),  # Bright yellow
-            7: (100, 150, 50),  # Light green
-            8: (50, 120, 100),  # Teal (transition to blue)
-            9: (30, 90, 150),   # Bright blue
-            10: (10, 50, 100)   # Dark blue (highest elevation)
-        }
+    area_1x1: list[tuple[int, int]] = [
+        (-10, -10), (-10, 0), (-10, 10),
+        (0, -10), (0, 10),
+        (10, -10), (10, 0), (10, 10)
+    ]
 
-        # parameters for the visuals
-        self.world_size: int = 2500
+    area_1x1: list[tuple[int, int]] = [(x, y) for x in range(-10, 20, 10) for y in range(-10, 20, 10)]
+    area_2x2: list[tuple[int, int]] = [(x, y) for x in range(-20, 30, 10) for y in range(-20, 30, 10)]
+    area_3x3: list[tuple[int, int]] = [(x, y) for x in range(-30, 40, 10) for y in range(-30, 40, 10)]
+    area_10x10: list[tuple[int, int]] = [(x, y) for x in range(-100, 110, 10) for y in range(-100, 110, 10)]
+
+
+    # lists for the cells 
+    all_matrices = np.load("map_1234.npz")
+    elevation_matrix = all_matrices["elevation_smoothed_matrix"]
+    temperature_matrix = all_matrices["temperature_smoothed_matrix"]
+    humidity_matrix = all_matrices["humidity_smoothed_matrix"]
+    radioactivity_matrix = all_matrices["radioactivity_smoothed_matrix"]
+    productivity_matrix = all_matrices["productivity_smoothed_matrix"]
+
+    all_utility_matrix = np.empty((world_size//10, world_size//10), dtype=object)
+    all_cells_matrix = np.empty((world_size//10, world_size//10), dtype=object)
 
